@@ -12,8 +12,10 @@ T MessageQueue<T>::receive()
     // The received object should then be returned by the receive function. 
     std::unique_lock<std::mutex> lock(_mtx);
     _condition.wait(lock, [this] { return !_queue.empty(); });
-    auto light = _queue.front();
-    _queue.pop_front();
+    auto light = _queue.back();
+    _queue.pop_back();
+    // avoid lack of sincronization beetwen the _currentPhase and notifications
+    _queue.clear();
     return light;
 }
 
@@ -45,6 +47,8 @@ void TrafficLight::waitForGreen()
 
 TrafficLightPhase TrafficLight::getCurrentPhase()
 {
+    // lock to avoid race codition between phase changing and getCurrentPhase calls
+    std::lock_guard<std::mutex> lock(_mutex);
     return _currentPhase;
 }
 
@@ -66,11 +70,11 @@ void TrafficLight::cycleThroughPhases()
     std::mt19937 gen(randomDevice());
     std::uniform_int_distribution<> dis(4,6);
     while (true) {
-        // avoid CPU high usage
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         // simulate traffic light time
         std::this_thread::sleep_for(std::chrono::seconds(dis(gen)));
-        auto newPhase = (getCurrentPhase() == TrafficLightPhase::red) ? TrafficLightPhase::green : TrafficLightPhase::red;
+        // lock to avoid race codition between phase changing and getCurrentPhase calls
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto newPhase = (_currentPhase == TrafficLightPhase::red) ? TrafficLightPhase::green : TrafficLightPhase::red;
         _currentPhase = newPhase;
         _msgQueue.send(std::move(newPhase));
     }
